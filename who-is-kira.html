@@ -1,0 +1,289 @@
+<title>Who Is Kira?</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Pirata+One&display=swap">
+<style>
+/* Layout: one narrow column you pass around. Night is the black notebook, day is the bone-coloured case file. */
+:root { color-scheme: dark; --bg: #0d0c0f; --fg: #e7e1d3; --mut: #a39d91; --acc: #e0364f; --line: #3d383f; --on-acc: #0d0c0f;
+  --display: "Pirata One", "UnifrakturCook", Georgia, serif; --body: "Courier Prime", "Courier New", monospace; }
+body.day { color-scheme: light; --bg: #e7e1d3; --fg: #1a1719; --mut: #5a5349; --acc: #9c1027; --line: #ada491; --on-acc: #f8f3e8; }
+body { background: var(--bg); color: var(--fg); font: 17px/1.5 var(--body); min-height: 100%;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 48px; }
+main { max-width: 32rem; margin-inline: auto; display: flex; flex-direction: column; gap: 22px; }
+h1, h2 { font-family: var(--display); font-weight: 400; line-height: 1.05; margin: 0; text-wrap: balance; outline: none; }
+h1 { font-size: clamp(3rem, 15vw, 4.6rem); }
+h2 { font-size: 1.7rem; }
+p, ol { margin: 0; }
+section { display: flex; flex-direction: column; gap: 10px; }
+.label { font-size: .8rem; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); }
+.mut { color: var(--mut); }
+.acc { color: var(--acc); }
+.plain-l { font-family: var(--body); font-weight: 700; } /* the display face's capital L is unreadable on its own */
+ol { padding-left: 1.5em; display: flex; flex-direction: column; gap: 8px; }
+button, input { font: inherit; color: var(--fg); border-radius: 2px; }
+button { background: transparent; border: 1px solid var(--line); padding: 12px 14px; min-height: 48px; cursor: pointer; text-align: left; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--acc); outline-offset: 2px; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.go { background: var(--acc); border-color: var(--acc); color: var(--on-acc); font-weight: 700; text-align: center; }
+.go:disabled { background: transparent; color: var(--mut); border-color: var(--line); opacity: 1; }
+.text { border: 0; padding: 8px 0; min-height: 44px; color: var(--mut); text-decoration: underline; align-self: flex-start; }
+.picks { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 8px; }
+.picks button { overflow-wrap: anywhere; }
+.picks button[aria-pressed="true"] { background: var(--acc); border-color: var(--acc); color: var(--on-acc); font-weight: 700; }
+.picks button[aria-pressed="true"]::before { content: "\2713\00a0"; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; min-width: 0; background: transparent; border: 1px solid var(--line); padding: 10px 12px; min-height: 48px; }
+.row button { flex: none; text-align: center; }
+.board { display: flex; flex-direction: column; }
+.board div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.board span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.big { font-family: var(--display); font-size: clamp(2.2rem, 11vw, 3.2rem); line-height: 1.1; overflow-wrap: anywhere; }
+</style>
+
+<main id="app"></main>
+
+<script id="core">
+const ROLE = { kira: 'Kira', l: 'L', tf: 'Task Force' };
+
+function shuffle(a, rng) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function newGame(names, rng = Math.random) {
+  const ids = shuffle(names.map((_, i) => i), rng);
+  return {
+    players: names.map((name, i) => ({ name, role: i === ids[0] ? 'kira' : i === ids[1] ? 'l' : 'tf', alive: true })),
+    night: 1, order: names.map((_, i) => i), turn: 0, phase: 'pass',
+    tips: {}, target: null, notes: [], victim: null, board: [], book: [], arrested: null,
+  };
+}
+const alive = g => g.players.flatMap((p, i) => p.alive ? [i] : []);
+const kiraId = g => g.players.findIndex(p => p.role === 'kira');
+function winner(g) {
+  if (!g.players[kiraId(g)].alive) return 'justice';
+  return alive(g).length <= 2 ? 'kira' : null;
+}
+function seal(g, id, { tip, target, pair }) {
+  g.tips[id] = tip;
+  const role = g.players[id].role;
+  if (role === 'kira') g.target = target;
+  if (role === 'l') g.notes.push({ night: g.night, pair, hit: pair.includes(kiraId(g)) });
+  g.phase = 'sealed';
+}
+function nextTurn(g) {
+  g.turn++;
+  g.phase = g.turn < g.order.length ? 'pass' : 'dawn';
+}
+function resolveNight(g) {
+  g.players[g.target].alive = false;
+  g.victim = g.target;
+  g.book.push({ night: g.night, victim: g.target });
+  const tips = Object.values(g.tips);
+  g.board = alive(g).map(id => ({ id, n: tips.filter(t => t === id).length })).sort((a, b) => b.n - a.n);
+  g.phase = 'day';
+}
+function arrest(g, id) {
+  g.arrested = id;
+  if (id !== null) g.players[id].alive = false;
+  g.phase = 'verdict';
+}
+function nextNight(g) {
+  Object.assign(g, { night: g.night + 1, order: alive(g), turn: 0, tips: {}, target: null, victim: null, arrested: null, phase: 'pass' });
+}
+</script>
+
+<script>
+const KEY = 'who-is-kira';
+const SEAL_MS = 6000; // every turn takes the same minimum time, so nobody's role shows in how long they hold the phone
+const app = document.getElementById('app');
+const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+let g = null, names = ['Player 1', 'Player 2', 'Player 3', 'Player 4'], error = '';
+let pick = {}, sealAt = 0, ticker = null, quitArmed = false, lastKey = '';
+
+try {
+  g = JSON.parse(localStorage.getItem(KEY));
+  if (g && g.phase === 'secret') g.phase = 'pass';
+} catch { g = null; }
+function save() {
+  try { g ? localStorage.setItem(KEY, JSON.stringify(g)) : localStorage.removeItem(KEY); } catch {}
+}
+
+const nameOf = id => esc(g.players[id].name);
+const quit = () => `<button class="text" data-act="quit">${quitArmed ? 'Tap again to end this game' : 'End game'}</button>`;
+const picks = (kind, ids) => `<div class="picks">${ids.map(id => `<button data-pick="${kind}" data-id="${id}" aria-pressed="false">${nameOf(id)}</button>`).join('')}</div>`;
+
+const screens = {
+  setup: () => `
+    <h1>Who Is Kira?</h1>
+    <p>Someone at this table owns a notebook. Any name they write in it is gone by morning. Find them before they run out of people.</p>
+    <section><h2>How it works</h2><ol>
+      <li><b>Night.</b> Pass this phone around. Everyone secretly sees their role and files an anonymous tip. Kira also writes a name. L also checks two people.</li>
+      <li><b>Morning.</b> Put the phone in the middle. Read who died and how many tips each person got.</li>
+      <li><b>Day.</b> Argue, accuse, lie. Then agree on one arrest, or let everyone go.</li>
+      <li><b>The end.</b> Arrest Kira and the Task Force wins. Kira wins when only two people are left.</li>
+    </ol></section>
+    <section><h2>Who's playing?</h2><p class="mut">4 to 10 people, sitting together.</p>
+      ${names.map((n, i) => `<div class="row"><input id="name-${i}" data-name="${i}" value="${esc(n)}" maxlength="20" aria-label="Player ${i + 1} name">${names.length > 4 ? `<button data-act="remove" data-id="${i}" aria-label="Remove player ${i + 1}">Remove</button>` : ''}</div>`).join('')}
+      ${names.length < 10 ? '<button data-act="add">Add a player</button>' : ''}
+    </section>
+    ${error ? `<p class="acc" role="alert">${esc(error)}</p>` : ''}
+    <button class="go" data-act="start">Deal the roles</button>`,
+
+  pass: () => {
+    const id = g.order[g.turn];
+    return `<p class="label">Night ${g.night} &middot; turn ${g.turn + 1} of ${g.order.length}</p>
+      <h1>Pass to ${nameOf(id)}</h1>
+      <p>Only ${nameOf(id)} looks at the next screen.</p>
+      <button class="go" data-act="reveal">I'm ${nameOf(id)}</button>
+      ${quit()}`;
+  },
+
+  secret: () => {
+    const id = g.order[g.turn], me = g.players[id];
+    const others = alive(g).filter(i => i !== id);
+    const intro = {
+      kira: 'Nobody knows but you. File a tip like everyone else, and write one name in the notebook.',
+      l: "You're the only one who can investigate. Don't get caught, because Kira will come for you.",
+      tf: 'You have no powers, only your judgment. Listen carefully and catch the liar.',
+    }[me.role];
+    return `<p class="label">Night ${g.night} &middot; ${nameOf(id)}</p>
+      <h1>You are <span class="acc ${me.role === 'l' ? 'plain-l' : ''}">${ROLE[me.role]}</span></h1>
+      <p>${intro}</p>
+      ${me.role === 'kira' ? `<section><h2>Write a name</h2><p class="mut">They die before morning.</p>${picks('target', others)}</section>` : ''}
+      ${me.role === 'l' ? `<section><h2>Check two people</h2><p class="mut">You'll learn if Kira is one of them, but not which one.</p>${picks('pair', others)}
+        ${g.notes.length ? `<div class="board">${g.notes.map(noteRow).join('')}</div>` : ''}</section>` : ''}
+      <section><h2>File an anonymous tip</h2><p class="mut">Who do you want the table to suspect?</p>${picks('tip', others)}</section>
+      <button class="go" id="seal" data-act="seal" disabled>Seal</button>`;
+  },
+
+  sealed: () => {
+    const id = g.order[g.turn], me = g.players[id];
+    const last = g.notes[g.notes.length - 1];
+    const body = me.role === 'kira' ? `<p class="big acc">${nameOf(g.target)}</p><p>The name is written.</p>`
+      : me.role === 'l' ? `<p class="big ${last.hit ? 'acc' : ''}">${last.hit ? 'One of them is Kira' : 'Neither is Kira'}</p><p>You checked ${last.pair.map(nameOf).join(' and ')}.</p>`
+      : `<p class="big">Tip filed</p><p>Keep a straight face.</p>`;
+    return `<p class="label">Night ${g.night} &middot; ${nameOf(id)}</p>${body}
+      <button class="go" data-act="next">Hide this and pass the phone</button>`;
+  },
+
+  dawn: () => `<p class="label">Night ${g.night} is over</p>
+    <h1>Everyone back to the table</h1>
+    <p>Put the phone where everyone can see it, then read the morning report.</p>
+    <button class="go" data-act="dawn">Read the morning report</button>`,
+
+  day: () => {
+    const v = g.players[g.victim], over = winner(g);
+    return `<p class="label">Case file &middot; day ${g.night}</p>
+      <h1>${nameOf(g.victim)} is dead</h1>
+      <p>Heart attack, some time before dawn. ${v.role === 'l' ? '<b class="acc">They were L.</b> The investigation has lost its best mind.' : 'They were Task Force.'}</p>
+      <section><h2>Anonymous tips</h2><div class="board">${g.board.map(b => `<div><span>${nameOf(b.id)}</span><span>${b.n} ${b.n === 1 ? 'tip' : 'tips'}</span></div>`).join('')}</div></section>
+      ${over ? '<button class="go" data-act="end">See how it ended</button>' : `
+      <section><h2>Who gets arrested?</h2><p class="mut">Talk it out, then agree as a group.</p>${picks('arrest', alive(g))}</section>
+      <button class="go" id="arrest" data-act="arrest" disabled>Arrest</button>
+      <button data-act="release">Arrest nobody tonight</button>
+      ${quit()}`}`;
+  },
+
+  verdict: () => {
+    const id = g.arrested, over = winner(g);
+    const head = id === null ? `<h1>Nobody was arrested</h1><p>The notebook stays open tonight.</p>`
+      : `<p class="label">Arrest report</p><h1>${nameOf(id)} was ${g.players[id].role === 'kira' ? '<span class="acc">Kira</span>' : g.players[id].role === 'l' ? '<span class="plain-l">L</span>' : ROLE.tf}</h1>
+        <p>${g.players[id].role === 'kira' ? 'The notebook is on the table.' : g.players[id].role === 'l' ? 'You just locked up your own detective.' : 'Wrong person. Kira is still sitting with you.'}</p>`;
+    return `${head}<button class="go" data-act="${over ? 'end' : 'night'}">${over ? 'See how it ended' : 'Start the next night'}</button>`;
+  },
+
+  end: () => {
+    const justice = winner(g) === 'justice';
+    return `<p class="label">Case closed &middot; ${g.night} ${g.night === 1 ? 'night' : 'nights'}</p>
+      <h1>${justice ? 'The Task Force wins' : 'Kira wins'}</h1>
+      <p>${justice ? 'The notebook is burned. It is over.' : 'Too few people are left to stop them. The new world has a new god.'}</p>
+      <section><h2>Who was who</h2><div class="board">${g.players.map(p => `<div><span>${esc(p.name)}</span><span class="${p.role === 'kira' ? 'acc' : ''}">${ROLE[p.role]}</span></div>`).join('')}</div></section>
+      <section><h2>Names in the notebook</h2><div class="board">${g.book.map(b => `<div><span>Night ${b.night}</span><span>${nameOf(b.victim)}</span></div>`).join('')}</div></section>
+      <button class="go" data-act="new">Play again</button>`;
+  },
+};
+const noteRow = n => `<div><span>Night ${n.night}: ${n.pair.map(nameOf).join(', ')}</span><span>${n.hit ? 'Kira' : 'clear'}</span></div>`;
+
+function canSeal() {
+  const me = g.players[g.order[g.turn]];
+  return pick.tip !== undefined && (me.role !== 'kira' || pick.target !== undefined) && (me.role !== 'l' || pick.pair?.length === 2);
+}
+function sync() {
+  app.querySelectorAll('[data-pick]').forEach(b => {
+    const v = pick[b.dataset.pick], id = +b.dataset.id;
+    b.setAttribute('aria-pressed', Array.isArray(v) ? v.includes(id) : v === id);
+  });
+  const sealBtn = document.getElementById('seal');
+  if (sealBtn) {
+    const left = Math.ceil((sealAt - Date.now()) / 1000);
+    sealBtn.disabled = left > 0 || !canSeal();
+    sealBtn.textContent = left > 0 ? `Seal (${left})` : 'Seal';
+  }
+  const arrestBtn = document.getElementById('arrest');
+  if (arrestBtn) {
+    arrestBtn.disabled = pick.arrest === undefined;
+    arrestBtn.textContent = pick.arrest === undefined ? 'Pick someone to arrest' : `Arrest ${g.players[pick.arrest].name}`;
+  }
+}
+function render() {
+  clearInterval(ticker);
+  const phase = g ? g.phase : 'setup';
+  document.body.className = ['day', 'verdict', 'end'].includes(phase) ? 'day' : 'night';
+  app.innerHTML = screens[phase]();
+  sync();
+  if (phase === 'secret') ticker = setInterval(sync, 250);
+  const key = phase + (g ? g.turn + '/' + g.night : '');
+  if (key !== lastKey) {
+    lastKey = key;
+    scrollTo(0, 0);
+    const head = app.querySelector('h1, .big');
+    if (head && phase !== 'setup') { head.tabIndex = -1; head.focus({ preventScroll: true }); }
+  }
+}
+
+const go = fn => { fn(); pick = {}; quitArmed = false; save(); render(); };
+const actions = {
+  add: () => { names.push(`Player ${names.length + 1}`); render(); document.getElementById(`name-${names.length - 1}`).focus(); },
+  remove: b => { names.splice(+b.dataset.id, 1); render(); },
+  start: () => {
+    const clean = names.map(n => n.trim());
+    if (clean.some(n => !n)) error = 'Every player needs a name.';
+    else if (new Set(clean.map(n => n.toLowerCase())).size < clean.length) error = 'Two players have the same name. Change one so the tips make sense.';
+    else { error = ''; return go(() => { g = newGame(clean); }); }
+    render();
+  },
+  reveal: () => { sealAt = Date.now() + SEAL_MS; go(() => { g.phase = 'secret'; }); },
+  seal: () => go(() => seal(g, g.order[g.turn], pick)),
+  next: () => go(() => nextTurn(g)),
+  dawn: () => go(() => resolveNight(g)),
+  arrest: () => go(() => arrest(g, pick.arrest)),
+  release: () => go(() => arrest(g, null)),
+  night: () => go(() => nextNight(g)),
+  end: () => go(() => { g.phase = 'end'; }),
+  new: () => go(() => { names = g.players.map(p => p.name); g = null; }),
+  quit: () => {
+    if (quitArmed) return actions.new();
+    quitArmed = true;
+    render();
+  },
+};
+app.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.act) return actions[b.dataset.act](b);
+  const kind = b.dataset.pick, id = +b.dataset.id;
+  // the pair keeps the two most recent picks; tapping a picked name removes it
+  if (kind === 'pair') {
+    const cur = pick.pair || [];
+    pick.pair = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id].slice(-2);
+  } else pick[kind] = id;
+  sync();
+});
+app.addEventListener('input', e => {
+  if (e.target.dataset.name !== undefined) names[+e.target.dataset.name] = e.target.value;
+});
+render();
+</script>
